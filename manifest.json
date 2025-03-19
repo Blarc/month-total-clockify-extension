@@ -1,0 +1,16 @@
+{
+    "name": "Clockify Month Total",
+    "description": "Adds month total to clockify tracker page.",
+    "version": "1.0",
+    "manifest_version": 3,
+    "action": {
+        "default_icon": "icon.png"
+    },
+    "content_scripts": [
+        {
+            "matches": ["https://app.clockify.me/*"],
+            "run_at": "document_end",
+            "js": ["script.js"]
+        }
+    ]
+}
