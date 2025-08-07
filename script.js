@@ -168,11 +168,11 @@ async function fetchClockifyReport(targetElement) {
 
         const responseData = await response.json();
         console.log(responseData)
-        const offHours = await fetchTimeOffHours(start, end);
-        console.log(offHours)
+        const offSeconds = await fetchTimeOffSeconds(start, end);
+        console.log(offSeconds)
 
         const totalTimeSeconds = responseData.totals[0]?.totalTime ?? 0; // Default to 0 seconds if no data
-        updateWeekTotalDiv(targetElement, totalTimeSeconds, offHours);
+        updateWeekTotalDiv(targetElement, totalTimeSeconds, offSeconds);
     } catch (error) {
         console.error("Error fetching Clockify report:", error.message);
         updateWeekTotalDiv(targetElement, "Unable to fetch data", 0);
@@ -198,10 +198,9 @@ function createFetchTimeOffDataPayload(startDate, endDate) {
 
 /**
  * Fetches time-off data from Clockify API for a specific date range
- * @returns {Promise<Number>} - Number of time off hours.
+ * @returns {Promise<Number>} - Amount of time off in seconds.
  */
-async function fetchTimeOffHours() {
-    const {start, end} = getPreviousMonthRange();
+async function fetchTimeOffSeconds(start, end) {
     const payload = createFetchTimeOffDataPayload(start, end);
 
     const url = `https://api.clockify.me/api/v1/workspaces/${getFromUserInLocalStorage("defaultWorkspace")}/time-off/requests`;
@@ -244,7 +243,7 @@ async function fetchTimeOffHours() {
                 }
             });
         }
-        return totalTimeOffHours;
+        return totalTimeOffHours * 3600;
     } catch (error) {
         console.error("Error fetching time-off data:", error);
         return 0;
@@ -252,10 +251,12 @@ async function fetchTimeOffHours() {
 }
 
 
-function calculateMonthTotal(totalTimeSeconds, offHours) {
-    let done = formatSecondsToTime(totalTimeSeconds - offHours * 3600)
-    let left = getWorkingHoursForCurrentMonth() - offHours
-    let overtime = calculateWorkingHoursDifference((totalTimeSeconds - offHours * 3600) / 3600)
+function calculateMonthTotal(totalTimeSeconds, offSeconds) {
+    let done = formatSecondsToHoursAndMinutes(totalTimeSeconds - offSeconds);
+    let left = (getWorkingSecondsForCurrentMonth() - offSeconds) / 3600;
+    let overtime = calculateWorkingHoursDifference((totalTimeSeconds - offSeconds) / 3600);
+    // let off = offSeconds / 3600;
+    // return `${done} / ${left}:00 (${coloredText(`+${off}:00`, "green")}) (${overtime})`
     return `${done} / ${left}:00 (${overtime})`
 }
 
@@ -263,13 +264,13 @@ function calculateMonthTotal(totalTimeSeconds, offHours) {
  * Updates the content of the week total div.
  * @param {HTMLElement} targetElement - The target element where the week total div will be added.
  * @param {number} totalTimeSeconds - The total time seconds.
- * @param {number} offHours - The number of off time hours.
+ * @param {number} offSeconds - The number of off time hours.
  */
-function updateWeekTotalDiv(targetElement, totalTimeSeconds, offHours) {
+function updateWeekTotalDiv(targetElement, totalTimeSeconds, offSeconds) {
     const updatedDivHTML = `
     <div id="${extensionDivId}" class="cl-d-flex cl-align-items-end cl-mt-2 cl-mt-lg-0 cl-justify-content-lg-end">
       <div class="cl-h6 cl-mb-0 cl-lh-1 cl-white-space-no-wrap ng-star-inserted">Month total:</div>
-      <div class="cl-h2 cl-mb-0 cl-ml-2 cl-lh-1 ng-star-inserted">${calculateMonthTotal(totalTimeSeconds, offHours)}</div>
+      <div class="cl-h2 cl-mb-0 cl-ml-2 cl-lh-1 ng-star-inserted">${calculateMonthTotal(totalTimeSeconds, offSeconds)}</div>
     </div>`;
     addDiv(updatedDivHTML, targetElement);
 }
@@ -279,17 +280,17 @@ function updateWeekTotalDiv(targetElement, totalTimeSeconds, offHours) {
  * @param {number} totalSeconds - The total time in seconds.
  * @returns {string} - The formatted time as hh:mm.
  */
-function formatSecondsToTime(totalSeconds) {
+function formatSecondsToHoursAndMinutes(totalSeconds) {
     const hours = Math.floor(totalSeconds / 3600);
     const minutes = Math.floor((totalSeconds % 3600) / 60);
     return `${hours}:${minutes.toString().padStart(2, "0")}`;
 }
 
 /**
- * Calculate the total working hours in the current month.
- * @returns {number} - Total working hours (weekdays * 8 hours).
+ * Calculate the total working seconds in the current month.
+ * @returns {number} - Total working seconds (weekdays * 8 hours * 3600s).
  */
-function getWorkingHoursForCurrentMonth() {
+function getWorkingSecondsForCurrentMonth() {
     const now = new Date();
     const year = now.getFullYear();
     const month = now.getMonth(); // Current month (0-based index)
@@ -298,7 +299,7 @@ function getWorkingHoursForCurrentMonth() {
     const weekdays = getWeekdaysInMonth(year, month);
 
     // Assume 8 working hours per weekday
-    return weekdays * 8;
+    return weekdays * 8 * 3600;
 }
 
 /**
@@ -352,19 +353,11 @@ function calculateWorkingHoursDifference(actualHours) {
     const color = hoursDifference < 0 ? "red" : "green";
 
     // Return styled HTML with the formatted time
-    return `<span style="color: ${color};">${formattedTime}</span>`;
-
-
+    return coloredText(formattedTime, color);
 }
 
-/**
- * Converts a time string in hh:mm format to a floating-point number of hours.
- * @param {string} timeString - The time string in hh:mm format.
- * @returns {number} - The total time in hours as a number.
- */
-function convertTimeToHours(timeString) {
-    const [hours, minutes] = timeString.split(":").map(Number);
-    return hours + minutes / 60;
+function coloredText(text, color) {
+    return `<span style="color: ${color};">${text}</span>`;
 }
 
 /**
