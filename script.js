@@ -252,6 +252,13 @@ async function fetchTimeOffHours() {
 }
 
 
+function calculateMonthTotal(totalTimeSeconds, offHours) {
+    let done = formatSecondsToTime(totalTimeSeconds - offHours * 3600)
+    let left = getWorkingHoursForCurrentMonth() - offHours
+    let overtime = calculateWorkingHoursDifference((totalTimeSeconds - offHours * 3600) / 3600)
+    return `${done} / ${left}:00 (${overtime})`
+}
+
 /**
  * Updates the content of the week total div.
  * @param {HTMLElement} targetElement - The target element where the week total div will be added.
@@ -262,7 +269,7 @@ function updateWeekTotalDiv(targetElement, totalTimeSeconds, offHours) {
     const updatedDivHTML = `
     <div id="${extensionDivId}" class="cl-d-flex cl-align-items-end cl-mt-2 cl-mt-lg-0 cl-justify-content-lg-end">
       <div class="cl-h6 cl-mb-0 cl-lh-1 cl-white-space-no-wrap ng-star-inserted">Month total:</div>
-      <div class="cl-h2 cl-mb-0 cl-ml-2 cl-lh-1 ng-star-inserted">${formatSecondsToTime(totalTimeSeconds - offHours * 3600)} / ${getWorkingHoursForCurrentMonth() - offHours}:00 (${calculateWorkingHoursDifference(totalTimeSeconds / 3600)})</div>
+      <div class="cl-h2 cl-mb-0 cl-ml-2 cl-lh-1 ng-star-inserted">${calculateMonthTotal(totalTimeSeconds, offHours)}</div>
     </div>`;
     addDiv(updatedDivHTML, targetElement);
 }
