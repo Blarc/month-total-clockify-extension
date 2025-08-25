@@ -86,7 +86,7 @@ function waitForXPath(xpath, callback) {
 
 /**
  * Gets the date range for the previous month.
- * @returns {{ start: string, end: string, monthName: string }} - The start, end, and name of the previous month.
+ * @returns {{ start: string, end: string, today: string }} - The start, end, and the current date.
  */
 function getPreviousMonthRange() {
     const currentDate = new Date();
@@ -97,7 +97,7 @@ function getPreviousMonthRange() {
     return {
         start: currentMonthStart.toISOString(),
         end: currentMonthEnd.toISOString(),
-        monthName: currentMonthStart.toLocaleString("en-US", {month: "long"}).toLowerCase(),
+        today: currentDate.toISOString()
     };
 }
 
@@ -148,7 +148,7 @@ function createPayload(startDate, endDate) {
  * @param {HTMLElement} targetElement - The element to append the new div after fetching the report.
  */
 async function fetchClockifyReport(targetElement) {
-    const {start, end} = getPreviousMonthRange();
+    const {start, end, today} = getPreviousMonthRange();
     const payload = createPayload(start, end);
     const url = `https://reports.api.clockify.me/workspaces/${getFromUserInLocalStorage("defaultWorkspace")}/reports/summary`;
 
@@ -168,14 +168,16 @@ async function fetchClockifyReport(targetElement) {
 
         const responseData = await response.json();
         console.log(responseData)
-        const offSeconds = await fetchTimeOffSeconds(start, end);
-        console.log(offSeconds)
+        const offSecondsCurrentMonth = await fetchTimeOffSeconds(start, end);
+        console.log(offSecondsCurrentMonth)
+        const offSecondsCurrentMonthUntilToday = await fetchTimeOffSeconds(start, today);
+        console.log(offSecondsCurrentMonthUntilToday)
 
         const totalTimeSeconds = responseData.totals[0]?.totalTime ?? 0; // Default to 0 seconds if no data
-        updateWeekTotalDiv(targetElement, totalTimeSeconds, offSeconds);
+        updateWeekTotalDiv(targetElement, calculateMonthTotal(totalTimeSeconds, offSecondsCurrentMonth, offSecondsCurrentMonthUntilToday));
     } catch (error) {
         console.error("Error fetching Clockify report:", error.message);
-        updateWeekTotalDiv(targetElement, "Unable to fetch data", 0);
+        updateWeekTotalDiv(targetElement, "Error fetching Clockify report.");
     }
 }
 
@@ -251,52 +253,70 @@ async function fetchTimeOffSeconds(start, end) {
 }
 
 
-function calculateMonthTotal(totalTimeSeconds, offSeconds) {
-    let done = formatSecondsToHoursAndMinutes(totalTimeSeconds - offSeconds);
-    let left = (getWorkingSecondsForCurrentMonth() - offSeconds) / 3600;
-    let overtime = calculateWorkingHoursDifference((totalTimeSeconds - offSeconds) / 3600);
-    // let off = offSeconds / 3600;
+function calculateMonthTotal(totalTimeSeconds, offSecondsCurrentMonth, offSecondsUntilToday) {
+    let done = totalTimeSeconds - offSecondsCurrentMonth;
+    let left = (getWorkingSecondsForCurrentMonth() - offSecondsCurrentMonth);
+    let overtime = (done + offSecondsUntilToday - getWorkingSecondsForCurrentMonth(true));
+    // let off = offSecondsCurrentMonth / 3600;
     // return `${done} / ${left}:00 (${coloredText(`+${off}:00`, "green")}) (${overtime})`
-    return `${done} / ${left}:00 (${overtime})`
+    return `${formatSecondsToHoursAndMinutes(done)} / ${formatSecondsToHoursAndMinutes(left)} (${formatSecondsToHoursAndMinutes(overtime, true, true)})`
 }
 
 /**
  * Updates the content of the week total div.
  * @param {HTMLElement} targetElement - The target element where the week total div will be added.
- * @param {number} totalTimeSeconds - The total time seconds.
- * @param {number} offSeconds - The number of off time hours.
+ * @param {string} value - The value.
  */
-function updateWeekTotalDiv(targetElement, totalTimeSeconds, offSeconds) {
+function updateWeekTotalDiv(targetElement, value) {
     const updatedDivHTML = `
     <div id="${extensionDivId}" class="cl-d-flex cl-align-items-end cl-mt-2 cl-mt-lg-0 cl-justify-content-lg-end">
       <div class="cl-h6 cl-mb-0 cl-lh-1 cl-white-space-no-wrap ng-star-inserted">Month total:</div>
-      <div class="cl-h2 cl-mb-0 cl-ml-2 cl-lh-1 ng-star-inserted">${calculateMonthTotal(totalTimeSeconds, offSeconds)}</div>
+      <div class="cl-h2 cl-mb-0 cl-ml-2 cl-lh-1 ng-star-inserted">${value}</div>
     </div>`;
     addDiv(updatedDivHTML, targetElement);
 }
 
 /**
- * Converts a total time in seconds to the hh:mm format.
- * @param {number} totalSeconds - The total time in seconds.
- * @returns {string} - The formatted time as hh:mm.
+ * Converts seconds to HH:mm format.
+ * @param {number} seconds - The time in seconds.
+ * @param {boolean} [prefixWithSign=false] - If true, formats with sign for positive/negative difference
+ * @param {boolean} [colorize=false] - If true, formats with green/red color
+ * @returns {string} - The formatted time in HH:mm format.
  */
-function formatSecondsToHoursAndMinutes(totalSeconds) {
-    const hours = Math.floor(totalSeconds / 3600);
-    const minutes = Math.floor((totalSeconds % 3600) / 60);
-    return `${hours}:${minutes.toString().padStart(2, "0")}`;
+function formatSecondsToHoursAndMinutes(seconds, prefixWithSign = false, colorize = false) {
+    const isNegative = seconds < 0;
+    const absoluteSeconds = Math.abs(seconds);
+    const hours = Math.floor(absoluteSeconds / 3600);
+    const minutes = Math.floor((absoluteSeconds % 3600) / 60);
+
+    let timeString = `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}`;
+    if (prefixWithSign) {
+        timeString = `${isNegative ? "-" : "+"}${timeString}`;
+    }
+    if (colorize) {
+        if (isNegative) {
+            timeString = coloredText(timeString, "red");
+        } else {
+            timeString = coloredText(timeString, "green");
+        }
+    }
+
+    return timeString;
 }
 
 /**
- * Calculate the total working seconds in the current month.
+ * Calculate the total working seconds in the current month, optionally up to a specific day.
+ * @param {boolean} [untilToday=false] - If true, calculates only until the current day; if false, calculates for the entire month.
  * @returns {number} - Total working seconds (weekdays * 8 hours * 3600s).
  */
-function getWorkingSecondsForCurrentMonth() {
+function getWorkingSecondsForCurrentMonth(untilToday = false) {
     const now = new Date();
     const year = now.getFullYear();
     const month = now.getMonth(); // Current month (0-based index)
+    const day = untilToday ? now.getDate() : null;
 
-    // Get the number of weekdays in the current month
-    const weekdays = getWeekdaysInMonth(year, month);
+    // Get the number of weekdays in the current month (up to a specified day if provided)
+    const weekdays = getWeekdaysInMonth(year, month, day);
 
     // Assume 8 working hours per weekday
     return weekdays * 8 * 3600;
@@ -317,7 +337,7 @@ function getWeekdaysInMonth(year, month, upToDay = null) {
     // Loop through all the days in the month up to the specified day
     for (let day = 1; day <= totalDays; day++) {
         const currentDay = new Date(year, month, day).getDay();
-        // Increment if the day is a weekday (Monday–Friday)
+        // Increment if the day is a weekday (Monday-Friday)
         if (currentDay !== 0 && currentDay !== 6) {
             weekdaysCount++;
         }
@@ -326,53 +346,8 @@ function getWeekdaysInMonth(year, month, upToDay = null) {
     return weekdaysCount;
 }
 
-/**
- * Calculate the difference between expected and actual working hours for the current month.
- * @param {number} actualHours - The current number of hours worked in the month.
- * @returns {string} - The difference.
- */
-function calculateWorkingHoursDifference(actualHours) {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth(); // Current month (0-based index)
-    const today = now.getDate(); // Current day of the month
-
-    // Expected number of weekdays up to today in the current month
-    const weekdaysUpToToday = getWeekdaysInMonth(year, month, today);
-
-    // Each weekday is 8 hours of work
-    const expectedHours = weekdaysUpToToday * 8;
-
-    // Calculate the difference
-    const hoursDifference = actualHours - expectedHours;
-
-    // Format the result to HH:mm
-    const formattedTime = formatHoursToHHmm(hoursDifference);
-
-    // Determine the color based on the sign of the difference
-    const color = hoursDifference < 0 ? "red" : "green";
-
-    // Return styled HTML with the formatted time
-    return coloredText(formattedTime, color);
-}
-
 function coloredText(text, color) {
     return `<span style="color: ${color};">${text}</span>`;
-}
-
-/**
- * Converts a floating-point number of hours into HH:mm format.
- * @param {number} hours - The total hours as a number.
- * @returns {string} - The formatted time in HH:mm format.
- */
-function formatHoursToHHmm(hours) {
-    const totalMinutes = Math.round(Math.abs(hours) * 60); // Convert hours to total minutes
-    const hh = Math.floor(totalMinutes / 60); // Extract hours
-    const mm = totalMinutes % 60; // Extract remaining minutes
-
-    // Format with sign for positive/negative difference
-    const sign = hours < 0 ? "-" : "+";
-    return `${sign}${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
 }
 
 // Start observing for the target element and fetch the report when it appears
